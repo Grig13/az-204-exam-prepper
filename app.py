@@ -236,6 +236,37 @@ def beautify_text(text):
     text = re.sub(r'\s(B\.\sNo)', r'<br><strong>B. No</strong>', text)
     return text
 
+
+def get_scenario_context(q):
+    """Return the best scenario text for a case study question."""
+    # Prefer authored scenario_context if reasonably long.
+    ff = q.get('scenario_context')
+    if isinstance(ff, str) and len(ff.strip()) > 80:
+        return ff.strip()
+
+    # If there is full question text, take the prefix before the solution statement or external question clue.
+    qt = q.get('question_text', '')
+    if isinstance(qt, str) and qt.strip():
+        # Try to chop off the solution/answers part.
+        separators = ["Solution:", "Does the solution meet the goal?", "A.", "B."]
+        best_cut = len(qt)
+        for sep in separators:
+            idx = qt.find(sep)
+            if idx != -1 and idx < best_cut:
+                best_cut = idx
+        context = qt[:best_cut].strip()
+        if context:
+            return context
+
+    # Last resort: debug text if available.
+    debug_txt = q.get('debug_raw_text')
+    if isinstance(debug_txt, str) and debug_txt.strip():
+        lines = [l.strip() for l in debug_txt.splitlines() if l.strip()]
+        # Keep only the first 20 lines if huge.
+        return "\n".join(lines[:20])
+
+    return "(Scenario context not available)"
+
 @st.cache_data
 def load_data():
     path = config.OUTPUT_JSON_FILE
@@ -424,7 +455,7 @@ with col_head3:
     st.metric("Remaining", f"{len(current_pool) - st.session_state.idx}")
 
 if q.get('is_case_study'):
-    context_text = q.get('scenario_context')
+    context_text = get_scenario_context(q)
     st.markdown(f"""<div class="scenario-box">📚 Part of Scenario: {q.get('scenario_id')}</div>""", unsafe_allow_html=True)
     if context_text:
         with st.expander("📖 Read Scenario Context"):

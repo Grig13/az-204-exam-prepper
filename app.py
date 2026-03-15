@@ -188,6 +188,7 @@ def save_user_progress(user_id, progress_dict):
             st.warning(f"Supabase save failed: {e}")
 
     save_user_progress_local(progress_dict)
+    st.session_state.last_synced = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
     if not saved:
         st.info("Saved progress locally only.")
 
@@ -286,6 +287,8 @@ if 'user_progress' not in st.session_state: st.session_state.user_progress = {}
 if 'pool_indices' not in st.session_state: st.session_state.pool_indices = []
 if 'filters_changed' not in st.session_state: st.session_state.filters_changed = True
 if 'ask_status_dialog' not in st.session_state: st.session_state.ask_status_dialog = False
+if 'last_synced' not in st.session_state: st.session_state.last_synced = None
+if 'auto_sync_enabled' not in st.session_state: st.session_state.auto_sync_enabled = False
 
 # --- 5. FILTERING LOGIC (STABLE POOL) ---
 def generate_pool(mode, include_unseen, include_mistakes, include_mastered):
@@ -341,12 +344,29 @@ with st.sidebar:
     if not st.session_state.user_id:
         st.info("Enter a User ID to enable progress sync across devices.")
 
-    if st.button("🔄 Sync with cloud"):
+    if st.button("🔄 Force refresh (pull latest progress)"):
         if st.session_state.user_id:
             st.session_state.user_progress = load_user_progress(st.session_state.user_id)
-            st.success("Progress synced from cloud/local.")
+            st.session_state.last_synced = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+            st.success("Progress pulled from cloud.")
         else:
             st.warning("Set a user ID first.")
+
+    st.session_state.auto_sync_enabled = st.checkbox("Auto-sync every minute", value=st.session_state.auto_sync_enabled)
+
+    if st.session_state.auto_sync_enabled and st.session_state.user_id:
+        # auto refresh interval in ms
+        st_autorefresh(interval=60_000, key="auto_sync")
+        st.session_state.user_progress = load_user_progress(st.session_state.user_id)
+        st.session_state.last_synced = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+        st.info("Auto-sync completed.")
+
+    st.markdown("---")
+
+    if st.session_state.last_synced:
+        st.caption(f"Last synced at: {st.session_state.last_synced}")
+    else:
+        st.caption("Last synced at: never")
 
     st.markdown("---")
 

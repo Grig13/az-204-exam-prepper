@@ -6,6 +6,25 @@ import re
 import datetime
 import config  # Imports settings from config.py
 
+# Optional Supabase-based sync (recommended for cross-device)
+try:
+    from supabase import create_client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_TABLE = "user_progress"
+
+supabase = None
+if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        supabase = None
+        st.warning(f"Supabase init failed: {e}")
+
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="AZ-204 Ultimate Simulator",
@@ -103,28 +122,59 @@ st.markdown("""
 
 PROGRESS_FILE = "user_progress.json"
 
-def load_user_progress():
-    """Loads the user progress from file."""
+
+def load_user_progress_from_local():
+    """Loads the user progress from local file."""
     if os.path.exists(PROGRESS_FILE):
         try:
-            with open(PROGRESS_FILE, "r") as f:
+            with open(PROGRESS_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except Exception:
             return {}
     return {}
 
-def save_user_progress(progress_dict):
-    """Saves the progress to file (Auto-save)."""
+
+def save_user_progress_local(progress_dict):
+    """Saves the progress to local file (Auto-save fallback)."""
     try:
-        with open(PROGRESS_FILE, "w") as f:
+        with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
             json.dump(progress_dict, f, indent=4)
     except Exception as e:
-        st.error(f"Error saving progress: {e}")
+        st.error(f"Error saving progress locally: {e}")
+
+
+def load_user_progress(user_id):
+    """Loads progress from Supabase if configured, else local file."""
+    if not user_id:
+        return {}
+
+    if supabase:
+        try:
+            resp = supabase.table(SUPABASE_TABLE).select("progress").eq("user_id", user_id).maybe_single().execute()
+            data = resp.data
+            if data and isinstance(data, dict) and data.get("progress") is not None:
+                return data.get("progress", {})
+        except Exception as e:
+            st.warning(f"Supabase load failed: {e}")
+
+    return load_user_progress_from_local()
+
+
+def save_user_progress(user_id, progress_dict):
+    """Saves progress to Supabase (if configured) and local fallback."""
+    if supabase and user_id:
+        try:
+            supabase.table(SUPABASE_TABLE).upsert({"user_id": user_id, "progress": progress_dict}, on_conflict="user_id").execute()
+        except Exception as e:
+            st.warning(f"Supabase save failed: {e}")
+
+    save_user_progress_local(progress_dict)
+
 
 def update_progress(q_id, status):
     """Updates the question status and auto-saves."""
     st.session_state.user_progress[q_id] = status
-    save_user_progress(st.session_state.user_progress)
+    save_user_progress(st.session_state.user_id, st.session_state.user_progress)
 
 def beautify_text(text):
     if not text: return ""
@@ -154,7 +204,9 @@ def load_data():
 questions = load_data()
 
 if 'idx' not in st.session_state: st.session_state.idx = 0
-if 'user_progress' not in st.session_state: st.session_state.user_progress = load_user_progress()
+if 'user_id' not in st.session_state: st.session_state.user_id = ""
+# user_progress is loaded after user_id is set in sidebar block
+if 'user_progress' not in st.session_state: st.session_state.user_progress = {}
 if 'pool_indices' not in st.session_state: st.session_state.pool_indices = []
 if 'filters_changed' not in st.session_state: st.session_state.filters_changed = True
 if 'ask_status_dialog' not in st.session_state: st.session_state.ask_status_dialog = False
@@ -208,6 +260,20 @@ def prev_q():
 with st.sidebar:
     st.title("🧠 AZ-204 Brain")
 
+    st.markdown("### 👤 Account & sync")
+    st.session_state.user_id = st.text_input("User ID (email or nickname)", value=st.session_state.user_id)
+    if not st.session_state.user_id:
+        st.info("Enter a User ID to enable progress sync across devices.")
+
+    if st.button("🔄 Sync with cloud"):
+        if st.session_state.user_id:
+            st.session_state.user_progress = load_user_progress(st.session_state.user_id)
+            st.success("Progress synced from cloud/local.")
+        else:
+            st.warning("Set a user ID first.")
+
+    st.markdown("---")
+
     total_q = len(questions)
     correct_q = sum(1 for s in st.session_state.user_progress.values() if s.lower() == "correct")
     wrong_q = sum(1 for s in st.session_state.user_progress.values() if s.lower() == "incorrect")
@@ -242,6 +308,13 @@ with st.sidebar:
     if st.button("🔄 Regenerate/Reset Session", type="secondary"):
         st.session_state.filters_changed = True
         st.rerun()
+
+# sync progress for user ID at startup
+if st.session_state.user_id and not st.session_state.user_progress:
+    st.session_state.user_progress = load_user_progress(st.session_state.user_id)
+
+if not st.session_state.user_id and not st.session_state.user_progress:
+    st.session_state.user_progress = load_user_progress_from_local()
 
 # --- 7. POOL CALCULATION (STABLE) ---
 if st.session_state.filters_changed:

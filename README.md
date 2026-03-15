@@ -183,4 +183,21 @@ This project is intended for educational purposes.
 
 ---
 
+## ☁️ Cloud Sync (Supabase) Setup
+1. Create a Supabase account and project.
+2. Add table `user_progress` with columns:
+   - `user_id` text (primary key)
+   - `progress` jsonb
+3. Save your Supabase credentials as environment vars:
+   - `SUPABASE_URL`
+   - `SUPABASE_KEY`
+4. Install dependencies and run:
+   - `pip install -r requirements.txt`
+   - `streamlit run app.py`
+5. In the app sidebar, enter User ID and click `Sync with cloud`.
+
+> Without Supabase, the app still works using local `user_progress.json`.
+
+---
+
 If you find this project useful, feel free to ⭐ the repository.

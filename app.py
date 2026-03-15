@@ -370,6 +370,24 @@ with st.sidebar:
 
     st.markdown("---")
 
+    st.session_state.jump_q_id = st.text_input("Jump to question ID", value=st.session_state.get('jump_q_id', ''))
+    if st.button("Go to question"):
+        jump_id = st.session_state.jump_q_id.strip()
+        if jump_id:
+            # Find question in current pool or global list
+            q_idx = next((i for i, question in enumerate(questions) if question.get('id') == jump_id), None)
+            if q_idx is not None:
+                if q_idx in st.session_state.pool_indices:
+                    st.session_state.idx = st.session_state.pool_indices.index(q_idx)
+                    st.success(f"Jumped to question {jump_id}")
+                else:
+                    # if not in filtered pool, force represent and move
+                    st.session_state.pool_indices = [q_idx]
+                    st.session_state.idx = 0
+                    st.warning(f"Question {jump_id} not in current filter pool; showing single question.")
+            else:
+                st.error(f"Question ID '{jump_id}' not found")
+
     if st.session_state.last_synced:
         st.caption(f"Last synced at: {st.session_state.last_synced}")
     else:
@@ -438,6 +456,12 @@ if st.session_state.idx >= len(current_pool):
 real_idx = current_pool[st.session_state.idx]
 q = questions[real_idx]
 
+# Reset per-question view flags when switching questions
+if st.session_state.get('current_q_id') != q['id']:
+    st.session_state.current_q_id = q['id']
+    st.session_state.reveal = False
+    st.session_state.feedback = None
+
 # --- 8. MAIN UI ---
 
 q_status = st.session_state.user_progress.get(q['id'], "unseen").lower()
@@ -495,14 +519,15 @@ st.markdown(
 
 if q.get('related_images'):
     st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(f"**{len(q.get('related_images'))} image(s) attached**")
 
     for img_i, img in enumerate(q['related_images'], start=1):
-        with st.expander(f"{q['id']} - 📷 View image {img_i}", expanded=False):
+        with st.expander(f"{q['id']} - 📷 Image {img_i}", expanded=False):
             img_path = resolve_asset_path(img)
             if img_path and os.path.exists(img_path):
-                st.image(img_path)
+                st.image(img_path, caption=os.path.basename(img_path), use_column_width=True)
             else:
-                st.warning(f"Image not found: {img} (resolved: {img_path})")
+                st.error(f"Image not found: {img} (resolved path: {img_path})")
 
 elif q.get('type') == 'Interactive/Visual' and not q.get('related_images'):
     st.info("🖼️ Visual question. See 'PDF Source'.")

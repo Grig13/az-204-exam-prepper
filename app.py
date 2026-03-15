@@ -1,4 +1,8 @@
 import streamlit as st
+try:
+    from streamlit import st_autorefresh
+except ImportError:
+    st_autorefresh = None
 import json
 import random
 import os
@@ -355,11 +359,14 @@ with st.sidebar:
     st.session_state.auto_sync_enabled = st.checkbox("Auto-sync every minute", value=st.session_state.auto_sync_enabled)
 
     if st.session_state.auto_sync_enabled and st.session_state.user_id:
-        # auto refresh interval in ms
-        st_autorefresh(interval=60_000, key="auto_sync")
-        st.session_state.user_progress = load_user_progress(st.session_state.user_id)
-        st.session_state.last_synced = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-        st.info("Auto-sync completed.")
+        if st_autorefresh:
+            # auto refresh interval in ms
+            st_autorefresh(interval=60_000, key="auto_sync")
+            st.session_state.user_progress = load_user_progress(st.session_state.user_id)
+            st.session_state.last_synced = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+            st.info("Auto-sync completed.")
+        else:
+            st.warning("Auto-sync is not available in this Streamlit version.")
 
     st.markdown("---")
 

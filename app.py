@@ -143,38 +143,83 @@ def save_user_progress_local(progress_dict):
         st.error(f"Error saving progress locally: {e}")
 
 
+def _load_user_progress_from_supabase(user_id):
+    if not user_id or not supabase:
+        return None
+
+    try:
+        resp = supabase.table(SUPABASE_TABLE).select("progress").eq("user_id", user_id).execute()
+        data = getattr(resp, "data", None)
+
+        # Supabase returns list of rows for select, maybe_single might differ
+        if isinstance(data, list) and data:
+            return data[0].get("progress", {})
+        if isinstance(data, dict) and data.get("progress") is not None:
+            return data.get("progress", {})
+    except Exception as e:
+        st.warning(f"Supabase load failed: {e}")
+
+    return None
+
+
 def load_user_progress(user_id):
     """Loads progress from Supabase if configured, else local file."""
-    if not user_id:
-        return {}
+    if user_id and supabase:
+        cloud_progress = _load_user_progress_from_supabase(user_id)
+        if cloud_progress is not None:
+            st.info(f"Loaded progress from Supabase for user '{user_id}'")
+            return cloud_progress
 
-    if supabase:
-        try:
-            resp = supabase.table(SUPABASE_TABLE).select("progress").eq("user_id", user_id).maybe_single().execute()
-            data = resp.data
-            if data and isinstance(data, dict) and data.get("progress") is not None:
-                return data.get("progress", {})
-        except Exception as e:
-            st.warning(f"Supabase load failed: {e}")
-
-    return load_user_progress_from_local()
+    local_progress = load_user_progress_from_local()
+    if local_progress:
+        st.info("Loaded progress from local file.")
+    return local_progress
 
 
 def save_user_progress(user_id, progress_dict):
     """Saves progress to Supabase (if configured) and local fallback."""
-    if supabase and user_id:
+    saved = False
+    if user_id and supabase:
         try:
             supabase.table(SUPABASE_TABLE).upsert({"user_id": user_id, "progress": progress_dict}, on_conflict="user_id").execute()
+            st.info(f"Saved progress to Supabase for user '{user_id}'")
+            saved = True
         except Exception as e:
             st.warning(f"Supabase save failed: {e}")
 
     save_user_progress_local(progress_dict)
+    if not saved:
+        st.info("Saved progress locally only.")
 
 
 def update_progress(q_id, status):
     """Updates the question status and auto-saves."""
     st.session_state.user_progress[q_id] = status
     save_user_progress(st.session_state.user_id, st.session_state.user_progress)
+
+
+def resolve_asset_path(path):
+    if not path:
+        return None
+
+    # Normalize path separators
+    unified = path.replace('\\', os.sep).replace('/', os.sep)
+
+    # Absolute path or internal data path
+    if os.path.isabs(unified):
+        return unified if os.path.exists(unified) else None
+
+    root = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.normpath(os.path.join(root, unified))
+    if os.path.exists(candidate):
+        return candidate
+
+    candidate_cwd = os.path.normpath(os.path.join(os.getcwd(), unified))
+    if os.path.exists(candidate_cwd):
+        return candidate_cwd
+
+    return candidate
+
 
 def beautify_text(text):
     if not text: return ""
@@ -395,10 +440,11 @@ if q.get('related_images'):
 
     for img_i, img in enumerate(q['related_images'], start=1):
         with st.expander(f"{q['id']} - 📷 View image {img_i}", expanded=False):
-            if os.path.exists(img):
-                st.image(img)
+            img_path = resolve_asset_path(img)
+            if img_path and os.path.exists(img_path):
+                st.image(img_path)
             else:
-                st.warning("Image not found.")
+                st.warning(f"Image not found: {img} (resolved: {img_path})")
 
 elif q.get('type') == 'Interactive/Visual' and not q.get('related_images'):
     st.info("🖼️ Visual question. See 'PDF Source'.")
@@ -476,7 +522,11 @@ if "feedback" in st.session_state or st.session_state.get("reveal"):
     with t2:
         snaps = q.get('pdf_source_snapshots', [])
         for s in snaps:
-            if os.path.exists(s): st.image(s)
+            snap_path = resolve_asset_path(s)
+            if snap_path and os.path.exists(snap_path):
+                st.image(snap_path)
+            else:
+                st.warning(f"PDF snapshot not found: {s} (resolved: {snap_path})")
     with t3:
         for c in q.get('comments', []):
             user = c.get('user', '?')
